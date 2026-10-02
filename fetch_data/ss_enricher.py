@@ -38,10 +38,11 @@ if sys.platform == "win32":
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-SS_BATCH_URL  = "https://api.semanticscholar.org/graph/v1/paper/batch"
-SS_FIELDS     = "paperId,externalIds,citationCount,influentialCitationCount,venue,publicationVenue"
-BATCH_SIZE    = 500     # SS allows up to 500 IDs per request
-REQUEST_DELAY = 0.11    # seconds between requests (10 req/s with key, 1 req/s without)
+SS_BATCH_URL       = "https://api.semanticscholar.org/graph/v1/paper/batch"
+SS_FIELDS          = "paperId,externalIds,citationCount,influentialCitationCount,venue,publicationVenue"
+BATCH_SIZE         = 500   # SS allows up to 500 IDs per request
+DELAY_WITH_KEY     = 0.11  # ~10 req/s  (with API key)
+DELAY_WITHOUT_KEY  = 1.1   # ~1  req/s  (no key – free anonymous tier)
 
 # ─── DB helpers ───────────────────────────────────────────────────────────────
 
@@ -136,6 +137,10 @@ async def _fetch_ss_batch(
 async def enrich(batch_size: int = BATCH_SIZE) -> None:
     """
     Fetch all un-enriched papers from PostgreSQL and fill SS fields.
+
+    Works with or without a SEMANTIC_SCHOLAR_API_KEY in .env.
+    Without a key the batch interval is 1.1 s instead of 0.11 s,
+    which is still fast enough for hundreds of papers.
     """
     conn = await asyncpg.connect(_get_dsn())
 
@@ -148,8 +153,15 @@ async def enrich(batch_size: int = BATCH_SIZE) -> None:
         return
 
     has_key = bool(os.getenv("SEMANTIC_SCHOLAR_API_KEY", "").strip())
+    request_delay = DELAY_WITH_KEY if has_key else DELAY_WITHOUT_KEY
+
     print(f"[info]  {len(arxiv_ids)} papers to enrich")
-    print(f"[info]  API key: {'yes (10 req/s)' if has_key else 'no  (1 req/s, slower)'}")
+    if has_key:
+        print("[info]  API key: yes  (10 req/s)")
+    else:
+        print("[info]  API key: none (1 req/s – anonymous tier)")
+        print("[info]  Tip: set SEMANTIC_SCHOLAR_API_KEY in .env for 10x faster enrichment")
+        print("[info]  Apply at: https://www.semanticscholar.org/product/api#api-key-form")
     print(f"[info]  Batch size: {batch_size}\n")
 
     found      = 0
@@ -182,12 +194,12 @@ async def enrich(batch_size: int = BATCH_SIZE) -> None:
                             if e2.response.status_code != 429:
                                 raise
                     else:
-                        print("  [error]  Still rate-limited after retries, skipping batch.")
-                        await asyncio.sleep(REQUEST_DELAY)
-                        continue
+                    print("  [error]  Still rate-limited after retries, skipping batch.")
+                    await asyncio.sleep(request_delay)
+                    continue
                 else:
                     print(f"  [error]  {exc.response.text[:200]}")
-                    await asyncio.sleep(REQUEST_DELAY)
+                    await asyncio.sleep(request_delay)
                     continue
 
             print(f"  found {len(ss_data)}/{len(batch)}")
@@ -217,7 +229,7 @@ async def enrich(batch_size: int = BATCH_SIZE) -> None:
                         None, None, None, None,
                     )
 
-            await asyncio.sleep(REQUEST_DELAY)
+            await asyncio.sleep(request_delay)
 
     await conn.close()
 

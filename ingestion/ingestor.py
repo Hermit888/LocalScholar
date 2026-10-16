@@ -5,11 +5,10 @@ Ingestion pipeline: fetch papers from arXiv and write them to PostgreSQL.
 - Tracks every run as an ingestion_job row (supports resume on interruption)
 - Prints live progress so you can follow along
 
-Usage (quick test):
-    python fetch_data/ingestor.py
+Smoke test (writes up to 500 papers):
+    python test/test_ingestor_write_papers_to_db.py
 """
 
-import asyncio
 import os
 import sys
 import uuid
@@ -24,7 +23,7 @@ _ROOT = Path(__file__).parent.parent
 load_dotenv(_ROOT / ".env")
 sys.path.insert(0, str(_ROOT))
 
-from fetch_data.arxiv_client import ArxivClient, ArxivPaper
+from ingestion.arxiv_client import ArxivClient, ArxivPaper
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -197,22 +196,3 @@ async def ingest(
 
     print(f"\n[done]   inserted={inserted}  skipped={skipped}  failed={failed}")
     return summary
-
-
-# ─── Quick test entry point ───────────────────────────────────────────────────
-
-async def _demo() -> None:
-    """
-    Ingest cs.AI papers from 2020 (newest-first, capped at 500).
-    Papers from 2020 have had 5+ years to accumulate citations and venue data.
-    """
-    await ingest(
-        categories  = ["cs.AI"],
-        date_from   = date(2020, 1, 1),
-        date_to     = date(2020, 12, 31),
-        max_papers  = 500,
-    )
-
-
-if __name__ == "__main__":
-    asyncio.run(_demo())

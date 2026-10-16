@@ -349,39 +349,3 @@ class ArxivClient:
                 pass
             print(f"  [warn] Failed to parse entry (skipped): {arxiv_id_hint}  reason: {exc}")
             return None
-
-
-# ─── Quick smoke test ─────────────────────────────────────────────────────────
-
-async def _demo() -> None:
-    """Fetch 5 recent cs.AI papers from 2024 and print a summary."""
-    import sys
-    if sys.platform == "win32":
-        sys.stdout.reconfigure(encoding="utf-8")
-
-    client = ArxivClient(request_delay=3.0)
-
-    print("Fetching cs.AI papers (max 5, year 2024)...\n")
-    papers, result = await client.fetch_papers(
-        categories=["cs.AI"],
-        date_from=date(2024, 1, 1),
-        date_to=date(2024, 12, 31),
-        max_papers=5,
-        on_progress=lambda fetched, total: print(f"  progress: {fetched}/{total}"),
-    )
-
-    print(f"\narXiv total: {result.total_found}  |  fetched: {result.fetched}"
-          + ("  (truncated)" if result.truncated else ""))
-    print()
-
-    for i, p in enumerate(papers, 1):
-        print(f"[{i}] {p.title}")
-        print(f"     ID: {p.arxiv_id}v{p.version}  |  date: {p.submitted_date}")
-        print(f"     categories: {', '.join(p.categories)}")
-        print(f"     authors: {', '.join(p.authors[:3])}{'...' if len(p.authors) > 3 else ''}")
-        print(f"     abstract: {p.abstract[:120]}...")
-        print()
-
-
-if __name__ == "__main__":
-    asyncio.run(_demo())

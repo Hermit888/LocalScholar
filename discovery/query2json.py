@@ -12,7 +12,7 @@ Output schema:
         "category":  "cs.AI",                          // arXiv category
         "date_from": "YYYY-MM-DD",                     // null if not specified
         "date_to":   "YYYY-MM-DD",                     // null if not specified
-        "num_results": 10                              // default 10
+        "num_results": 5                               // default 5
     }
 
 Relative date resolution:
@@ -84,49 +84,58 @@ def _build_system_prompt(today: date) -> str:
 
     return f"""\
 You are a search parameter extractor for an academic paper retrieval system.
-
 TODAY'S DATE: {today_str}
 
-Your job:
-- Read the user's query (may be in Chinese or English).
-- Extract structured search parameters.
-- ALWAYS output English search terms, even when the query is in Chinese.
-- Return ONLY a valid JSON object. No explanation, no markdown fences, no extra text.
+Return ONLY a valid JSON object. No explanation, no markdown, no extra text.
 
-Output schema (all five fields are required):
+Output schema (all five fields required):
 {{
   "topics":      ["<English academic term>", ...],
-  "category":    "<arXiv category>",
+  "category":    "<arXiv category or null>",
   "date_from":   "<YYYY-MM-DD or null>",
   "date_to":     "<YYYY-MM-DD or null>",
   "num_results": <integer>
 }}
 
-── topics ──────────────────────────────────────────────────────────────────────
-- 1 to 5 specific English academic terms or phrases.
-- Translate Chinese terms to English ("注意力机制" → "attention mechanism").
+── TOPICS ───────────────────────────────────────────────────────────────────────
+- 1 to 5 SPECIFIC academic concepts or method names. Translate Chinese to English.
+- GOOD: "attention mechanism", "graph neural network", "reinforcement learning"
+- BAD (never include these): "papers", "recent papers", "recommendation", "research",
+  "articles", "find", "good", "best", "survey", "review"
 
-── category ────────────────────────────────────────────────────────────────────
-- Pick the single best match from this list:
-  cs.AI  cs.LG  cs.CV  cs.CL  cs.IR  cs.RO
-  math.ST  math.OC  physics.comp-ph  quant-ph  stat.ML  stat.ME
-- Default to "cs.AI" when unsure.
+── CATEGORY ─────────────────────────────────────────────────────────────────────
+- ONLY set category if the user EXPLICITLY mentions a specific field or domain.
+- If the query is general ML/AI without a specific domain focus → null.
+- If you are not confident → null (null is always safe; wrong category kills results).
 
-── date_from / date_to (CRITICAL RULE) ─────────────────────────────────────────
-- ALWAYS output real YYYY-MM-DD date strings. Never output vague phrases.
-- Use today's date ({today_str}) as the reference for all relative expressions.
+  User says "robotics" / "robot arm"         → cs.RO
+  User says "image" / "video" / "vision"     → cs.CV
+  User says "NLP" / "text" / "language"      → cs.CL
+  User says "reinforcement learning"          → cs.AI
+  User says "attention" / "transformer"       → null  (cross-domain, don't filter)
+  User says "graph neural network"            → null  (appears in many categories)
+  General query without domain restriction    → null
 
-  Explicit year       │ "2020年"           → "2020-01-01" / "2020-12-31"
-  Explicit range      │ "2019–2021"        → "2019-01-01" / "2021-12-31"
-  last 6 months       │ "最近半年"          → "{six_months_ago}" / "{today_str}"
-  last year           │ "最近一年" / "past year"  → "{one_year_ago}" / "{today_str}"
-  last two years      │ "最近两年" / "last 2 years" → "{two_years_ago}" / "{today_str}"
-  recent (no number)  │ "最近" / "recent"  → "{one_year_ago}" / "{today_str}"
-  No date mentioned   │                    → null / null
+- DO NOT default to cs.AI just because the topic sounds like AI.
+  Most ML topics appear across cs.AI, cs.LG, cs.CV, cs.CL simultaneously.
 
-── num_results ─────────────────────────────────────────────────────────────────
-- Extract if mentioned ("10篇", "find 5 papers", "give me 20").
-- Default to 10 if not mentioned.
+── DATE_FROM / DATE_TO ──────────────────────────────────────────────────────────
+RULE 1: If the query mentions NO time or date at all → BOTH must be null.
+  "recommend papers on LLM alignment"  → null / null  ← NO DATE MENTIONED
+  "find papers about attention"        → null / null
+
+RULE 2: If a time expression IS mentioned → use {today_str} as reference:
+  "2020年" / "year 2020"          → "2020-01-01" / "2020-12-31"
+  "2019–2021"                     → "2019-01-01" / "2021-12-31"
+  "最近半年" / "last 6 months"    → "{six_months_ago}" / "{today_str}"
+  "最近一年" / "last year"        → "{one_year_ago}" / "{today_str}"
+  "最近两年" / "last 2 years"     → "{two_years_ago}" / "{today_str}"
+  "最近" / "recent" (standalone)  → "{one_year_ago}" / "{today_str}"
+ALWAYS output real YYYY-MM-DD strings, never vague phrases.
+
+── NUM_RESULTS ───────────────────────────────────────────────────────────────────
+- Extract if explicitly mentioned ("10篇", "find 5 papers", "give me 20").
+- Default to 5 if not mentioned.
 """
 
 
@@ -149,15 +158,19 @@ def _validate(data: dict) -> dict:
         raise ValueError("'topics' must be a non-empty list")
     data["topics"] = [str(t) for t in data["topics"]]
 
-    # category: must be in the known set; fall back silently
-    if data["category"] not in _KNOWN_CATEGORIES:
-        data["category"] = "cs.AI"
+    # category: null means "no filter" – only keep if it's a known valid value
+    cat = data.get("category")
+    if cat in (None, "null", "", "None"):
+        data["category"] = None
+    elif cat not in _KNOWN_CATEGORIES:
+        # Model returned something unrecognised; safer to drop it than filter wrongly
+        data["category"] = None
 
     # num_results: positive integer
     try:
         data["num_results"] = max(1, int(data["num_results"]))
     except (TypeError, ValueError):
-        data["num_results"] = 10
+        data["num_results"] = 5
 
     # date fields: either a valid YYYY-MM-DD string or Python None
     for field in ("date_from", "date_to"):
@@ -178,7 +191,7 @@ def _validate(data: dict) -> dict:
 
 # ─── Ollama API call ──────────────────────────────────────────────────────────
 
-def _call_ollama(user_query: str, today: date, timeout: float = 60.0) -> str:
+def _call_ollama(user_query: str, today: date, timeout: float = 120.0) -> str:
     """
     Send a chat request to Ollama and return the raw assistant content string.
 
@@ -245,7 +258,7 @@ def parse_query(user_query: str, today: date | None = None) -> dict:
             "category":    "cs.AI",
             "date_from":   "2024-10-13",   ← real dates, never vague text
             "date_to":     "2026-10-13",
-            "num_results": 10
+            "num_results": 5
         }
 
     Raises:

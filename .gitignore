@@ -1,0 +1,6 @@
+.env
+__pycache__/
+*.pyc
+infra/benchmarks/results/*.csv
+infra/benchmarks/results/*.json
+!infra/benchmarks/results/.gitkeep

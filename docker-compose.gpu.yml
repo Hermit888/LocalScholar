@@ -1,0 +1,11 @@
+# GPU 覆盖文件：只给 ollama 挂 NVIDIA 显卡，其余服务不变
+# 用法: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

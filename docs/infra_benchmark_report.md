@@ -118,6 +118,27 @@ think 开/关各 3 次取中位数，`num_predict=4096` 让模型把回答写完
 ## 3. 长上下文 vs chunk 检索
 **问题**：直塞全文的 token 上限设多少？
 
+## 3.5 辅助模型：reranker 延迟（2026-10-19）
+**问题**：bge-reranker-base（278M）比 MiniLM（23M）大 12 倍，CPU 上给 50 个候选打分会不会太慢？量化有没有用？
+
+**方法**：`infra/benchmarks/reranker_bench.py`，50 篇 100-300 词的模拟摘要，batch 16，max_len 512，3 次取中位数。int8 为 ONNX Runtime 动态量化（optimum）。
+
+| 模型 | 精度 | 设备 | 50 候选耗时 s | VRAM GB |
+|---|---|---|---:|---:|
+| ms-marco-MiniLM-L-6-v2 | fp32 | CPU | 1.04 | – |
+| ms-marco-MiniLM-L-6-v2 | int8 | CPU | 1.10 | – |
+| ms-marco-MiniLM-L-6-v2 | fp32 | GPU | 0.17 | 0.23 |
+| bge-reranker-base | fp32 | CPU | 6.04 | – |
+| bge-reranker-base | int8 | CPU | 3.72 | – |
+| bge-reranker-base | fp32 | GPU | 0.70 | 1.32 |
+
+（原始数据：`results/reranker_20261019_2000.md`；测试 CPU 为 32 线程笔记本处理器，轻薄本预计慢 2-3 倍）
+
+**结论**：
+- bge-reranker-base 在 CPU 上可用：fp32 6 s，int8 量化后 3.7 s；GPU 上 0.7 s、1.3 GB 显存，与 4B Q4 共存无压力。
+- 量化只对 bge 有意义（提速 1.6×）；MiniLM 已经足够小，量化反而略慢（开销不在计算）。
+- 建议按硬件分档：有 GPU 或多核 CPU → bge（支持中文，精排用户原话）；弱 CPU → MiniLM。可并入启动时硬件探测。
+
 ## 4. 推理引擎对比（Ollama / llama.cpp / vLLM）
 
 ## 5. 容器 vs 原生（Windows）
